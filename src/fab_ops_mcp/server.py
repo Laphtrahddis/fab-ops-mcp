@@ -56,5 +56,33 @@ def get_tool_alarms(tool_name: str, hours: int = 24) -> list[dict]:
     return alarms
 
 
+@server.tool()
+def list_tools() -> list[dict]:
+    """List every piece of fab equipment (name and fab area, e.g. ETCH-01 in Etch).
+
+    Use this to find valid equipment names before calling get_tool_alarms.
+    """
+    with psycopg.connect(DATABASE_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT tools.name, tools.area, tools.id
+                FROM tools
+                ORDER BY tools.name
+                """
+            )
+            rows = cursor.fetchall()
+
+    fab_tools = []
+    for name, area, tool_id in rows:
+        fab_tool = {
+            "name": name,
+            "area": area,
+            "id": tool_id,
+        }
+        fab_tools.append(fab_tool)
+    return fab_tools
+
+
 if __name__ == "__main__":
     server.run()
