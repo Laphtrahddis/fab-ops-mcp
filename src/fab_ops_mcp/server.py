@@ -12,6 +12,8 @@ from mcp.server import MCPServer
 
 from typing import Literal
 
+from fastembed import TextEmbedding
+from pgvector.psycopg import register_vector
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
@@ -19,6 +21,7 @@ DATABASE_URL = os.environ.get(
 )
 
 server = MCPServer(name="fab-ops")
+embedding_model = TextEmbedding("BAAI/bge-small-en-v1.5")
 
 
 @server.tool()
@@ -139,6 +142,48 @@ def top_noisy_tools(days: int = 7, limit: int = 5) -> list[dict]:
         noisy_tools.append(noisy_tool)
     return noisy_tools
 
+
+@server.tool()
+def search_manual(question: str, top_k: int = 3) -> list[dict]:
+    """Search the fab equipment manuals by meaning and return the most relevant pages.
+
+    Use this for "how do I fix / what causes / what are the steps for" questions
+    about alarms, maintenance or equipment. Answer only from the returned pages,
+    and always cite the manual title and page number you used.
+
+    Args:
+        question: The engineer's question in plain English.
+        top_k: How many pages to return. Defaults to 3.
+    """
+    question_embedding = list(embedding_model.query_embed([question]))[0]
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        register_vector(connection)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT manual_title,
+                       page_number,
+                       content,
+                       1 - (embedding <=> %s) AS similarity
+                FROM manual_pages
+                ORDER BY embedding <=> %s
+                LIMIT %s
+                """,
+                (question_embedding, question_embedding, top_k),
+            )
+            rows = cursor.fetchall()
+
+    matching_pages = []
+    for manual_title, page_number, content, similarity in rows:
+        matching_page = {
+            "manual": manual_title,
+            "page": page_number,
+            "similarity": round(similarity, 3),
+            "text": content,
+        }
+        matching_pages.append(matching_page)
+    return matching_pages
 
 if __name__ == "__main__":
     server.run()
