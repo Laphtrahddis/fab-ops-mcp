@@ -96,5 +96,49 @@ def list_tools() -> list[dict]:
     return fab_tools
 
 
+@server.tool()
+def top_noisy_tools(days: int = 7, limit: int = 5) -> list[dict]:
+    """Rank fab tools by how many alarms they raised in the last few days, noisiest first.
+
+    Use this for questions like "which tools alarmed most this week?".
+    Each result also counts how many of those alarms were critical.
+
+    Args:
+        days: How many days back to look. Defaults to 7.
+        limit: How many tools to return. Defaults to 5.
+    """
+    start_time = datetime.now(timezone.utc) - timedelta(days=days)
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT tools.name,
+                       tools.area,
+                       count(*) AS alarm_count,
+                       count(*) FILTER (WHERE alarms.severity = 'critical') AS critical_count
+                FROM alarms
+                JOIN tools ON tools.id = alarms.tool_id
+                WHERE alarms.created_at >= %s
+                GROUP BY tools.name, tools.area
+                ORDER BY alarm_count DESC
+                LIMIT %s
+                """,
+                [start_time, limit],
+            )
+            rows = cursor.fetchall()
+
+    noisy_tools = []
+    for name, area, alarm_count, critical_count in rows:
+        noisy_tool = {
+            "name": name,
+            "area": area,
+            "alarm_count": alarm_count,
+            "critical_count": critical_count,
+        }
+        noisy_tools.append(noisy_tool)
+    return noisy_tools
+
+
 if __name__ == "__main__":
     server.run()
